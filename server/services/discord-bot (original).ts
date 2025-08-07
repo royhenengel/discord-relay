@@ -1,5 +1,4 @@
 import { Client, GatewayIntentBits, TextChannel, Message } from 'discord.js';
-import axios from 'axios';
 import { storage } from '../storage';
 import { InsertActivityLog } from '@shared/schema';
 
@@ -24,7 +23,7 @@ export class DiscordBotService {
     this.client.on('ready', async () => {
       this.isConnected = true;
       console.log(`Bot logged in as ${this.client.user?.tag}`);
-
+      
       await storage.updateBotStats({ status: 'online' });
       await this.logActivity('INFO', 'Bot connected to Discord WebSocket');
     });
@@ -37,12 +36,14 @@ export class DiscordBotService {
 
     this.client.on('messageCreate', async (message) => {
       if (message.author.bot) return;
-
+      
+      // Handle commands
       if (message.content.startsWith('!relay')) {
         await this.handleCommand(message);
         return;
       }
 
+      // Handle relay
       await this.handleMessageRelay(message);
     });
 
@@ -86,7 +87,7 @@ export class DiscordBotService {
     const activeRelays = relayConfigs.filter(config => config.active).length;
 
     const uptime = this.formatUptime(Date.now() - this.startTime);
-
+    
     const embed = {
       title: 'Bot Status',
       color: 0x5865F2,
@@ -109,7 +110,7 @@ export class DiscordBotService {
     }
 
     const [sourceId, targetId, bidirectional] = args;
-
+    
     try {
       const sourceChannel = await this.client.channels.fetch(sourceId) as TextChannel;
       const targetChannel = await this.client.channels.fetch(targetId) as TextChannel;
@@ -194,7 +195,7 @@ export class DiscordBotService {
 
         try {
           const targetChannel = await this.client.channels.fetch(targetChannelId) as TextChannel;
-
+          
           const relayEmbed = {
             author: {
               name: message.author.displayName || message.author.username,
@@ -209,20 +210,6 @@ export class DiscordBotService {
           };
 
           await targetChannel.send({ embeds: [relayEmbed] });
-
-          // Send to n8n webhook
-          try {
-            await axios.post('https://royhen.app.n8n.cloud/webhook-test/discord-relay', {
-              author: message.author.username,
-              content: message.content,
-              sourceChannelId: message.channelId,
-              targetChannelId,
-              originalMessageId: message.id,
-              timestamp: message.createdAt.toISOString(),
-            });
-          } catch (err) {
-            console.error('Webhook relay to n8n failed:', err);
-          }
 
           // Update stats
           const currentStats = await storage.getBotStats();

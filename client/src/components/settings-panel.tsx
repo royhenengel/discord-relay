@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { BotConfig } from "@shared/schema";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export function SettingsPanel() {
   const { toast } = useToast();
@@ -17,10 +17,14 @@ export function SettingsPanel() {
   
   const { data: botConfig, isLoading } = useQuery<BotConfig>({
     queryKey: ["/api/config"],
-    onSuccess: (data) => {
-      setConfig(data);
-    },
   });
+
+  // Use useEffect to update config when data changes
+  useEffect(() => {
+    if (botConfig) {
+      setConfig(botConfig);
+    }
+  }, [botConfig]);
 
   const updateConfigMutation = useMutation({
     mutationFn: async (newConfig: Partial<BotConfig>) => {

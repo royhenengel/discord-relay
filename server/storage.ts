@@ -1,10 +1,7 @@
-import { type User, type InsertUser, type RelayConfig, type InsertRelayConfig, type ActivityLog, type InsertActivityLog, type BotStats, type InsertBotStats, type BotConfig, type InsertBotConfig } from "@shared/schema";
+import { type RelayConfig, type InsertRelayConfig, type ActivityLog, type InsertActivityLog, type BotStats, type InsertBotStats, type BotConfig, type InsertBotConfig } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
   
   // Relay Config methods
   getRelayConfigs(): Promise<RelayConfig[]>;
@@ -28,14 +25,12 @@ export interface IStorage {
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<string, User>;
   private relayConfigs: Map<string, RelayConfig>;
   private activityLogs: ActivityLog[];
   private botStats: BotStats | undefined;
   private botConfig: BotConfig | undefined;
 
   constructor() {
-    this.users = new Map();
     this.relayConfigs = new Map();
     this.activityLogs = [];
     
@@ -59,22 +54,7 @@ export class MemStorage implements IStorage {
     };
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
-  }
 
   async getRelayConfigs(): Promise<RelayConfig[]> {
     return Array.from(this.relayConfigs.values()).sort((a, b) => 
@@ -92,6 +72,8 @@ export class MemStorage implements IStorage {
       ...config,
       id,
       createdAt: new Date(),
+      bidirectional: config.bidirectional ?? false,
+      active: config.active ?? true,
     };
     this.relayConfigs.set(id, relayConfig);
     return relayConfig;
@@ -122,6 +104,8 @@ export class MemStorage implements IStorage {
       ...log,
       id,
       timestamp: new Date(),
+      channelId: log.channelId ?? null,
+      userId: log.userId ?? null,
     };
     this.activityLogs.unshift(activityLog);
     
