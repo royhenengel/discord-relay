@@ -13,59 +13,34 @@ import fs from "fs/promises";
 const CONFIG_PATH = "./data/bot-config.json";
 
 export interface IStorage {
-  // Relay Config methods
   getRelayConfigs(): Promise<RelayConfig[]>;
   getRelayConfig(id: string): Promise<RelayConfig | undefined>;
   createRelayConfig(config: InsertRelayConfig): Promise<RelayConfig>;
-  updateRelayConfig(
-    id: string,
-    config: Partial<InsertRelayConfig>,
-  ): Promise<RelayConfig | undefined>;
+  updateRelayConfig(id: string, config: Partial<InsertRelayConfig>): Promise<RelayConfig | undefined>;
   deleteRelayConfig(id: string): Promise<boolean>;
 
-  // Activity Log methods
   getActivityLogs(limit?: number): Promise<ActivityLog[]>;
   createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
   clearActivityLogs(): Promise<void>;
 
-  // Bot Stats methods
   getBotStats(): Promise<BotStats | undefined>;
   updateBotStats(stats: Partial<InsertBotStats>): Promise<BotStats>;
 
-  // Bot Config methods
   getBotConfig(): Promise<BotConfig | undefined>;
   updateBotConfig(config: Partial<InsertBotConfig>): Promise<BotConfig>;
 }
 
 export class MemStorage implements IStorage {
-  private relayConfigs: Map<string, RelayConfig>;
-  private activityLogs: ActivityLog[];
-  private botStats: BotStats | undefined;
-  private botConfig: BotConfig | undefined;
-
-  constructor() {
-    this.relayConfigs = new Map();
-    this.activityLogs = [];
-
-    // Initialize default bot stats
-    this.botStats = {
-      id: randomUUID(),
-      messagesRelayed: 0,
-      apiCalls: 0,
-      uptime: "0m",
-      status: "offline",
-      lastUpdated: new Date(),
-    };
-
-    // Initialize default bot config
-    this.botConfig = {
-      id: randomUUID(),
-      botToken: process.env.DISCORD_BOT_TOKEN || "",
-      rateLimit: "moderate",
-      logLevel: "info",
-      autoReconnect: true,
-    };
-  }
+  private relayConfigs = new Map<string, RelayConfig>();
+  private activityLogs: ActivityLog[] = [];
+  private botStats: BotStats | undefined = {
+    id: randomUUID(),
+    messagesRelayed: 0,
+    apiCalls: 0,
+    uptime: "0m",
+    status: "offline",
+    lastUpdated: new Date(),
+  };
 
   async getRelayConfigs(): Promise<RelayConfig[]> {
     return Array.from(this.relayConfigs.values()).sort(
@@ -92,13 +67,9 @@ export class MemStorage implements IStorage {
     return relayConfig;
   }
 
-  async updateRelayConfig(
-    id: string,
-    config: Partial<InsertRelayConfig>,
-  ): Promise<RelayConfig | undefined> {
+  async updateRelayConfig(id: string, config: Partial<InsertRelayConfig>): Promise<RelayConfig | undefined> {
     const existing = this.relayConfigs.get(id);
     if (!existing) return undefined;
-
     const updated = { ...existing, ...config };
     this.relayConfigs.set(id, updated);
     return updated;
@@ -110,11 +81,7 @@ export class MemStorage implements IStorage {
 
   async getActivityLogs(limit = 50): Promise<ActivityLog[]> {
     return this.activityLogs
-      .sort(
-        (a, b) =>
-          new Date(b.timestamp || 0).getTime() -
-          new Date(a.timestamp || 0).getTime(),
-      )
+      .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
       .slice(0, limit);
   }
 
@@ -128,12 +95,9 @@ export class MemStorage implements IStorage {
       userId: log.userId ?? null,
     };
     this.activityLogs.unshift(activityLog);
-
-    // Keep only last 1000 logs
     if (this.activityLogs.length > 1000) {
       this.activityLogs = this.activityLogs.slice(0, 1000);
     }
-
     return activityLog;
   }
 
@@ -159,6 +123,17 @@ export class MemStorage implements IStorage {
       const data = await fs.readFile(CONFIG_PATH, "utf-8");
       return JSON.parse(data);
     } catch {
+      if (process.env.DISCORD_BOT_TOKEN) {
+        const bootstrapped: BotConfig = {
+          id: randomUUID(),
+          botToken: process.env.DISCORD_BOT_TOKEN,
+          rateLimit: "moderate",
+          logLevel: "info",
+          autoReconnect: true,
+        };
+        await this.updateBotConfig(bootstrapped);
+        return bootstrapped;
+      }
       return undefined;
     }
   }
