@@ -21,6 +21,9 @@ const CONFIG_PATH = "./data/bot-config.json";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  host: "postgresql://postgres:ymf%21hzm4fmr9qjb.JZN@db.hclwszrbbqlhexkkhevx.supabase.co:5432/postgres", // Extract this from your DATABASE_URL
+  port: 5432,
+  ssl: { rejectUnauthorized: false }, // Required for Supabase
 });
 
 export const db = drizzle(pool, { schema });
