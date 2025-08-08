@@ -5,17 +5,15 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import { cartographer } from "@replit/vite-plugin-cartographer";
 import { fileURLToPath } from "url";
 
+// __dirname workaround for ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const isDev = process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined;
+const isDev =
+  process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined;
 
 export default defineConfig({
-  plugins: [
-    react(),
-    runtimeErrorOverlay(),
-    ...(isDev ? [cartographer()] : []),
-  ],
+  plugins: [react(), runtimeErrorOverlay(), ...(isDev ? [cartographer()] : [])],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "client", "src"),
