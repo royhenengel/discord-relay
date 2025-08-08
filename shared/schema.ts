@@ -78,9 +78,11 @@ export type BotStats = typeof botStats.$inferSelect;
 export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
 export type BotConfig = typeof botConfig.$inferSelect;
 
-export default {
+const schema = {
+  botConfig,
+  botStats,
   relayConfigs,
   activityLogs,
-  botStats,
-  botConfig,
 };
+
+export { schema };
