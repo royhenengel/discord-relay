@@ -320,9 +320,12 @@ export class DiscordBotService {
 
   async connect() {
     const config = await storage.getBotConfig();
+
     if (!config?.botToken) {
       throw new Error("Bot token not configured");
     }
+
+    console.log("Using bot token:", config.botToken);
 
     await storage.updateBotStats({ status: "connecting" });
     await this.client.login(config.botToken);
