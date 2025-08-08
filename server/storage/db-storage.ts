@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pkg from "pg";
-const { Pool } = pkg;
+import dns from "dns";
 import {
   schema,
   botConfig,
@@ -19,11 +19,13 @@ import crypto from "crypto";
 
 const CONFIG_PATH = "./data/bot-config.json";
 
+// Force IPv4 resolution to avoid ENETUNREACH errors
+dns.setDefaultResultOrder("ipv4first");
+
+const { Pool } = pkg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  host: "postgresql://postgres:ymf%21hzm4fmr9qjb.JZN@db.hclwszrbbqlhexkkhevx.supabase.co:5432/postgres", // Extract this from your DATABASE_URL
-  port: 5432,
-  ssl: { rejectUnauthorized: false }, // Required for Supabase
+  ssl: { rejectUnauthorized: false },
 });
 
 export const db = drizzle(pool, { schema });
