@@ -3,6 +3,27 @@ import axios from "axios";
 import { storage } from "../storage";
 import { InsertActivityLog } from "@shared/schema";
 
+/**
+ * Prefer the environment token if present. This lets you rotate/fix a bad token
+ * without touching the DB row. If it's different from what's stored, we upsert
+ * it back into bot_config so the UI/API stay in sync.
+ */
+const ENV_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN?.trim();
+
+/** Mask a token for logs (avoid leaking secrets) */
+function maskToken(token: string) {
+  if (!token) return "<empty>";
+  if (token.length <= 10) return token.replace(/./g, "•");
+  return `${token.slice(0, 6)}…${token.slice(-4)}`;
+}
+
+/** Safe increment helper to avoid `|| 0 + 1` precedence footgun */
+async function incrementApiCalls(by = 1) {
+  const stats = await storage.getBotStats();
+  const current = stats?.apiCalls ?? 0;
+  await storage.updateBotStats({ apiCalls: current + by });
+}
+
 export class DiscordBotService {
   private client: Client;
   private isConnected = false;
@@ -29,26 +50,40 @@ export class DiscordBotService {
       await this.logActivity("INFO", "Bot connected to Discord WebSocket");
     });
 
-    this.client.on("disconnect", async () => {
+    // discord.js v14 does not emit "disconnect" on Client; use websocket events & ready state.
+    this.client.on("shardDisconnect", async (event, shardId) => {
       this.isConnected = false;
       await storage.updateBotStats({ status: "offline" });
-      await this.logActivity("WARN", "Bot disconnected from Discord");
+      await this.logActivity(
+        "WARN",
+        `Shard ${shardId} disconnected (${event.code})`
+      );
     });
 
     this.client.on("messageCreate", async (message) => {
-      if (message.author.bot) return;
+      try {
+        if (message.author.bot) return;
 
-      if (message.content.startsWith("!relay")) {
-        await this.handleCommand(message);
-        return;
+        if (message.content.startsWith("!relay")) {
+          await this.handleCommand(message);
+          return;
+        }
+
+        await this.handleMessageRelay(message);
+      } catch (err: any) {
+        console.error("messageCreate handler error:", err);
+        await this.logActivity("ERROR", `messageCreate error: ${err?.message || err}`);
       }
-
-      await this.handleMessageRelay(message);
     });
 
     this.client.on("error", async (error) => {
-      console.error("Discord bot error:", error);
-      await this.logActivity("ERROR", `Bot error: ${error.message}`);
+      console.error("Discord client error:", error);
+      await this.logActivity("ERROR", `Client error: ${error.message}`);
+    });
+
+    this.client.on("shardError", async (error) => {
+      console.error("Discord shard error:", error);
+      await this.logActivity("ERROR", `Shard error: ${error.message}`);
     });
   }
 
@@ -61,84 +96,84 @@ export class DiscordBotService {
         message.channelId === relay.sourceChannelId ||
         (relay.bidirectional && message.channelId === relay.targetChannelId);
 
-      if (shouldRelay) {
-        const targetChannelId =
-          message.channelId === relay.sourceChannelId
-            ? relay.targetChannelId
-            : relay.sourceChannelId;
+      if (!shouldRelay) continue;
 
-        try {
-          const targetChannel = (await this.client.channels.fetch(
+      const targetChannelId =
+        message.channelId === relay.sourceChannelId
+          ? relay.targetChannelId
+          : relay.sourceChannelId;
+
+      try {
+        const targetChannel = (await this.client.channels.fetch(
+          targetChannelId
+        )) as TextChannel;
+
+        const displayName =
+          message.member?.displayName ||
+          // globalName is the user profile display name (Discord v14)
+          (message.author as any).globalName ||
+          message.author.username;
+
+        const relayEmbed = {
+          author: {
+            name: displayName,
+            icon_url: message.author.displayAvatarURL(),
+          },
+          description: message.content || "(no text content)",
+          color: 0x5865f2,
+          footer: {
+            text: `Relayed from #${(message.channel as TextChannel).name}`,
+          },
+          timestamp: message.createdAt.toISOString(),
+        };
+
+        await targetChannel.send({ embeds: [relayEmbed as any] });
+
+        // Fire-and-forget: send to n8n webhook (non-blocking)
+        axios
+          .post("https://royhen.app.n8n.cloud/webhook-test/discord-relay", {
+            author: message.author.username,
+            content: message.content,
+            sourceChannelId: message.channelId,
             targetChannelId,
-          )) as TextChannel;
-
-          const relayEmbed = {
-            author: {
-              name: message.author.displayName || message.author.username,
-              iconURL: message.author.displayAvatarURL(),
-            },
-            description: message.content,
-            color: 0x5865f2,
-            footer: {
-              text: `Relayed from #${(message.channel as TextChannel).name}`,
-            },
+            originalMessageId: message.id,
             timestamp: message.createdAt.toISOString(),
-          };
-
-          await targetChannel.send({ embeds: [relayEmbed] });
-
-          // Send to n8n webhook
-          try {
-            await axios.post(
-              "https://royhen.app.n8n.cloud/webhook-test/discord-relay",
-              {
-                author: message.author.username,
-                content: message.content,
-                sourceChannelId: message.channelId,
-                targetChannelId,
-                originalMessageId: message.id,
-                timestamp: message.createdAt.toISOString(),
-              },
-            );
-          } catch (err) {
-            console.error("Webhook relay to n8n failed:", err);
-          }
-
-          const currentStats = await storage.getBotStats();
-          await storage.updateBotStats({
-            messagesRelayed: (currentStats?.messagesRelayed || 0) + 1,
-            apiCalls: (currentStats?.apiCalls || 0) + 1,
+          })
+          .catch((err) => {
+            console.error("Webhook relay to n8n failed:", err?.message || err);
           });
 
-          await this.logActivity(
-            "RELAY",
-            `Message relayed from #${(message.channel as TextChannel).name} to #${targetChannel.name} (ID: ${message.id})`,
-          );
-        } catch (error) {
-          console.error(
-            `Failed to relay message to ${targetChannelId}:`,
-            error,
-          );
-          await this.logActivity(
-            "ERROR",
-            `Failed to relay message to channel ${targetChannelId}: ${error}`,
-          );
-        }
+        const currentStats = await storage.getBotStats();
+        await storage.updateBotStats({
+          messagesRelayed: (currentStats?.messagesRelayed ?? 0) + 1,
+        });
+        await incrementApiCalls(1);
+
+        await this.logActivity(
+          "RELAY",
+          `Message relayed from #${
+            (message.channel as TextChannel).name
+          } to #${targetChannel.name} (ID: ${message.id})`
+        );
+      } catch (error: any) {
+        console.error(`Failed to relay message to ${targetChannelId}:`, error);
+        await this.logActivity(
+          "ERROR",
+          `Failed to relay message to channel ${targetChannelId}: ${error?.message || error}`
+        );
       }
     }
   }
 
   private async handleCommand(message: Message) {
     const args = message.content.split(" ").slice(1);
-    const command = args[0];
+    const command = (args[0] || "").toLowerCase();
 
-    await storage.updateBotStats({
-      apiCalls: (await storage.getBotStats())?.apiCalls || 0 + 1,
-    });
+    await incrementApiCalls(1);
 
     await this.logActivity(
       "CMD",
-      `User @${message.author.username} executed command: !relay ${command}`,
+      `User @${message.author.username} executed command: !relay ${command}`
     );
 
     switch (command) {
@@ -156,7 +191,7 @@ export class DiscordBotService {
         break;
       default:
         await message.reply(
-          "Unknown command. Available commands: status, add, remove, test",
+          "Unknown command. Available commands: status, add, remove, test"
         );
     }
   }
@@ -191,13 +226,13 @@ export class DiscordBotService {
       ],
     };
 
-    await message.reply({ embeds: [embed] });
+    await message.reply({ embeds: [embed as any] });
   }
 
   private async handleAddRelayCommand(message: Message, args: string[]) {
     if (args.length < 2) {
       await message.reply(
-        "Usage: !relay add <source_channel_id> <target_channel_id> [bidirectional]",
+        "Usage: !relay add <source_channel_id> <target_channel_id> [bidirectional]"
       );
       return;
     }
@@ -206,15 +241,15 @@ export class DiscordBotService {
 
     try {
       const sourceChannel = (await this.client.channels.fetch(
-        sourceId,
+        sourceId
       )) as TextChannel;
       const targetChannel = (await this.client.channels.fetch(
-        targetId,
+        targetId
       )) as TextChannel;
 
       if (!sourceChannel || !targetChannel) {
         await message.reply(
-          "One or both channels not found or not accessible.",
+          "One or both channels not found or not accessible."
         );
         return;
       }
@@ -230,14 +265,14 @@ export class DiscordBotService {
       });
 
       await message.reply(
-        `✅ Relay created: ${relayConfig.name} (ID: ${relayConfig.id})`,
+        `✅ Relay created: ${relayConfig.name} (ID: ${relayConfig.id})`
       );
       await this.logActivity("INFO", `New relay created: ${relayConfig.name}`);
-    } catch (error) {
+    } catch (error: any) {
       await message.reply(
-        "❌ Failed to create relay. Check channel IDs and permissions.",
+        "❌ Failed to create relay. Check channel IDs and permissions."
       );
-      await this.logActivity("ERROR", `Failed to create relay: ${error}`);
+      await this.logActivity("ERROR", `Failed to create relay: ${error?.message || error}`);
     }
   }
 
@@ -272,23 +307,23 @@ export class DiscordBotService {
     for (const relay of activeRelays) {
       try {
         const targetChannel = (await this.client.channels.fetch(
-          relay.targetChannelId,
+          relay.targetChannelId
         )) as TextChannel;
         await targetChannel.send(testMessage);
       } catch (error) {
         console.error(
           `Failed to send test message to ${relay.targetChannelId}:`,
-          error,
+          error
         );
       }
     }
 
     await message.reply(
-      `✅ Test messages sent to ${activeRelays.length} relay(s).`,
+      `✅ Test messages sent to ${activeRelays.length} relay(s).`
     );
     await this.logActivity(
       "INFO",
-      `Test messages sent to ${activeRelays.length} relays`,
+      `Test messages sent to ${activeRelays.length} relays`
     );
   }
 
@@ -296,7 +331,7 @@ export class DiscordBotService {
     type: string,
     message: string,
     channelId?: string,
-    userId?: string,
+    userId?: string
   ) {
     const log: InsertActivityLog = {
       type,
@@ -319,18 +354,41 @@ export class DiscordBotService {
   }
 
   async connect() {
+    // Pull current DB config
     const config = await storage.getBotConfig();
 
-    if (!config?.botToken) {
-      throw new Error("Bot token not configured");
+    // Choose token: ENV wins, else DB
+    const chosenToken = ENV_BOT_TOKEN || config?.botToken || "";
+
+    if (!chosenToken) {
+      throw new Error(
+        "Bot token not configured. Set DISCORD_BOT_TOKEN or update bot_config.bot_token."
+      );
     }
 
-    console.log("Using bot token:", config.botToken);
+    // If ENV differs from DB, sync DB so UI/status match
+    if (ENV_BOT_TOKEN && config?.botToken !== ENV_BOT_TOKEN) {
+      await storage.updateBotConfig({ botToken: ENV_BOT_TOKEN });
+    }
+
+    // Safe logging: only masked token
+    console.log("Discord bot using token:", maskToken(chosenToken));
 
     await storage.updateBotStats({ status: "connecting" });
-    await this.client.login(config.botToken);
-    console.log("DISCORD_BOT_TOKEN from env:", process.env.DISCORD_BOT_TOKEN);
-    console.log("Bot token from config:", config.botToken);
+
+    try {
+      await this.client.login(chosenToken);
+    } catch (err: any) {
+      // Add clearer error for invalid token to speed up debugging
+      if (err?.code === "TokenInvalid") {
+        await storage.updateBotStats({ status: "offline" });
+        throw new Error(
+          "Discord login failed: TokenInvalid. Verify DISCORD_BOT_TOKEN is correct and not revoked."
+        );
+      }
+      await storage.updateBotStats({ status: "offline" });
+      throw err;
+    }
   }
 
   async disconnect() {
