@@ -329,6 +329,8 @@ export class DiscordBotService {
 
     await storage.updateBotStats({ status: "connecting" });
     await this.client.login(config.botToken);
+    console.log("DISCORD_BOT_TOKEN from env:", process.env.DISCORD_BOT_TOKEN);
+    console.log("Bot token from config:", config.botToken);
   }
 
   async disconnect() {
