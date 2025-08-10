@@ -32,26 +32,47 @@ export const db = drizzle(pool, { schema });
 
 // BOT CONFIG
 export async function getBotConfig() {
-  const result = await db.select().from(botConfig).limit(1);
-  if (result.length > 0) return result[0];
+  // 1) Read from DB first
+  const { rows } = await pool.query(
+    `select id, bot_token, rate_limit, log_level, auto_reconnect, created_at, updated_at, last_connected_at
+     from bot_config
+     order by created_at asc
+     limit 1`
+  );
+  const row = rows[0];
 
-  if (process.env.DISCORD_BOT_TOKEN) {
-    const fallback: InsertBotConfig = {
-      botToken: process.env.DISCORD_BOT_TOKEN,
-      rateLimit: "moderate",
-      logLevel: "info",
-      autoReconnect: true,
-    };
-    await updateBotConfig(fallback);
-    return fallback;
-  }
+  // 2) If DB has a row (even if bot_token is NULL), return it
+  if (row) return {
+    id: row.id,
+    botToken: row.bot_token ?? null,
+    rateLimit: row.rate_limit ?? "moderate",
+    logLevel: row.log_level ?? "info",
+    autoReconnect: row.auto_reconnect ?? true,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastConnectedAt: row.last_connected_at ?? null,
+  };
 
-  try {
-    const data = await fs.readFile(CONFIG_PATH, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return undefined;
-  }
+  // 3) No row in DB: seed from ENV if present, else create an empty config row
+  const envToken = process.env.DISCORD_BOT_TOKEN?.trim() || null;
+  const seeded = await pool.query(
+    `insert into bot_config (bot_token, rate_limit, log_level, auto_reconnect)
+     values ($1, 'moderate', 'info', true)
+     returning id, bot_token, rate_limit, log_level, auto_reconnect, created_at, updated_at, last_connected_at`,
+    [envToken]
+  );
+  
+  const s = seeded.rows[0];
+  return {
+    id: s.id,
+    botToken: s.bot_token ?? null,
+    rateLimit: s.rate_limit ?? "moderate",
+    logLevel: s.log_level ?? "info",
+    autoReconnect: s.auto_reconnect ?? true,
+    createdAt: s.created_at,
+    updatedAt: s.updated_at,
+    lastConnectedAt: s.last_connected_at ?? null,
+  };
 }
 
 export async function updateBotConfig(data: Partial<InsertBotConfig>) {

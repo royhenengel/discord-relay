@@ -333,8 +333,12 @@ export class DiscordBotService {
     // Pull current DB config
     const config = await storage.getBotConfig();
 
-    // Choose token: ENV wins, else DB
-    const chosenToken = ENV_BOT_TOKEN || config?.botToken || "";
+    const chosenToken = (config?.botToken?.trim?.() || "") || (ENV_BOT_TOKEN || "");
+
+    // If we had to fall back to ENV and it differs from DB, persist it once:
+    if (!config?.botToken && ENV_BOT_TOKEN) {
+      await storage.updateBotConfig({ botToken: ENV_BOT_TOKEN });
+    }
 
     if (!chosenToken) {
       throw new Error(
