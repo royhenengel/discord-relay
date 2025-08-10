@@ -360,6 +360,14 @@ export class DiscordBotService {
       // PREVENT BUCKET BURNING: ensure we have session starts available
       await ensureSessionAvailable(chosenToken);
 
+      const config = await storage.getBotConfig();
+      const dbToken = (config?.botToken ?? "").trim();
+      const envToken = (process.env.DISCORD_BOT_TOKEN ?? "").trim();
+
+      console.log("[DBG] dbToken prefix:", dbToken.slice(0, 6), "len:", dbToken.length);
+      console.log("[DBG] envToken present:", envToken ? "yes" : "no");
+
+      // use DB as source of truth for token
       await this.client.login(chosenToken);
     } catch (err: any) {
       await storage.updateBotStats({ status: "offline" });
