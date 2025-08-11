@@ -55,9 +55,8 @@ async function start() {
     log.info('boot ok')
   } catch (e) {
     const err = e as any
-    const message = err?.message ?? String(err)
+    const message = err?.message ?? String(e)
     const stack = err?.stack ?? null
-    // print full error details
     console.error('[FATAL]', message)
     if (stack) console.error(stack)
     process.exit(1)
