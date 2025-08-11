@@ -1,0 +1,41 @@
+name: Review Bundle
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate manifest (tracked files)
+        run: |
+          git ls-files > review-manifest.txt
+
+      - name: Build review bundle (zip, exclude heavy stuff)
+        run: |
+          mkdir -p .review
+          zip -r .review/discord-relay-review.zip . \
+            -x "node_modules/*" "dist/*" ".git/*" ".cache/*" ".local/*" \
+               ".config/*" "logs/*" "*.log"
+
+          cp review-manifest.txt .review/review-manifest.txt
+
+      - name: Create/Update release (review-latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: review-latest
+          name: Automated Review Bundle
+          body: "Auto-generated review bundle."
+          prerelease: true
+          files: |
+            .review/discord-relay-review.zip
+            .review/review-manifest.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
