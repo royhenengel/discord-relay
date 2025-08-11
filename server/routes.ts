@@ -5,7 +5,6 @@ import { discordBot } from "./services/discord-bot";
 import { insertRelayConfigSchema, insertBotConfigSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  
   // Bot status routes
   app.get("/api/bot/status", async (req, res) => {
     try {
@@ -17,12 +16,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // UPDATED: connect route keeps DB-only logic and sets status on failure
   app.post("/api/bot/connect", async (req, res) => {
     try {
       await discordBot.connect();
-      res.json({ message: "Bot connected successfully" });
-    } catch (error) {
-      res.status(500).json({ message: `Failed to connect bot: ${error}` });
+      res.json({ ok: true, status: "connecting/online" });
+    } catch (err: any) {
+      await storage.updateBotStats({ status: "offline" });
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
     }
   });
 
@@ -60,11 +61,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const validatedData = insertRelayConfigSchema.partial().parse(req.body);
       const relay = await storage.updateRelayConfig(id, validatedData);
-      
+
       if (!relay) {
         return res.status(404).json({ message: "Relay not found" });
       }
-      
+
       res.json(relay);
     } catch (error) {
       res.status(400).json({ message: `Invalid relay configuration: ${error}` });
@@ -75,11 +76,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const success = await storage.deleteRelayConfig(id);
-      
+
       if (!success) {
         return res.status(404).json({ message: "Relay not found" });
       }
-      
+
       res.json({ message: "Relay deleted successfully" });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete relay" });
@@ -124,12 +125,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertBotConfigSchema.partial().parse(req.body);
       const config = await storage.updateBotConfig(validatedData);
-      
+
       // Don't expose the full bot token in response
       if (config?.botToken) {
         config.botToken = "************************";
       }
-      
+
       res.json(config);
     } catch (error) {
       res.status(400).json({ message: `Invalid bot configuration: ${error}` });
@@ -149,13 +150,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const httpServer = createServer(app);
 
-  // Initialize Discord bot on server start
-  try {
-    await discordBot.connect();
-    console.log("Discord bot initialized successfully");
-  } catch (error) {
-    console.error("Failed to initialize Discord bot:", error);
-  }
+  // NOTE: Removed auto-connect on startup.
+  // Start the bot manually by POSTing to /api/bot/connect after the server is up.
+  console.log("[routes] HTTP server ready. Use POST /api/bot/connect to start the Discord bot.");
 
   return httpServer;
 }

@@ -1,88 +1,73 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, timestamp, integer } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod";
+// shared/schema.ts
+import {
+  pgTable,
+  text,
+  uuid,
+  timestamp,
+  boolean,
+} from "drizzle-orm/pg-core";
+import { InferInsertModel, InferSelectModel } from "drizzle-orm";
 
-// Relay Config Table
-export const relayConfigs = pgTable("relay_configs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  sourceChannelId: text("source_channel_id").notNull(),
-  targetChannelId: text("target_channel_id").notNull(),
-  sourceChannelName: text("source_channel_name").notNull(),
-  targetChannelName: text("target_channel_name").notNull(),
-  bidirectional: boolean("bidirectional").default(false),
-  active: boolean("active").default(true),
-  createdAt: timestamp("created_at", { withTimezone: false }).defaultNow(),
-});
-
-// Activity Log Table
-export const activityLogs = pgTable("activity_logs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  timestamp: timestamp("timestamp", { withTimezone: false }).defaultNow(),
-  type: text("type").notNull(), // RELAY, CMD, INFO, WARN, ERROR
-  message: text("message").notNull(),
-  channelId: text("channel_id"),
-  userId: text("user_id"),
-});
-
-// Bot Stats Table
-export const botStats = pgTable("bot_stats", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  messagesRelayed: integer("messages_relayed").default(0),
-  apiCalls: integer("api_calls").default(0),
-  uptime: text("uptime"),
-  status: text("status").default("offline"), // online, offline, connecting
-  lastUpdated: timestamp("last_updated", { withTimezone: false }).defaultNow(),
-});
-
-// Bot Config Table
+// --- bot_config -------------------------------------------------------------
 export const botConfig = pgTable("bot_config", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  botToken: text("bot_token"),
-  rateLimit: text("rate_limit").default("moderate"),
-  logLevel: text("log_level").default("info"),
-  autoReconnect: boolean("auto_reconnect").default(true),
+  id: uuid("id").primaryKey().defaultRandom(),
+  bot_token: text("bot_token"),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  rate_limit: text("rate_limit").notNull().default("moderate"),
+  last_connected_at: timestamp("last_connected_at", { withTimezone: true }),
+  log_level: text("log_level").notNull().default("info"),
+  auto_reconnect: boolean("auto_reconnect").notNull().default(true),
+  n8n_webhook_url: text("n8n_webhook_url"),
 });
 
-// Insert Schemas (Zod)
-export const insertRelayConfigSchema = createInsertSchema(relayConfigs).omit({
-  id: true,
-  createdAt: true,
+export type BotConfig = InferSelectModel<typeof botConfig>;
+export type InsertBotConfig = InferInsertModel<typeof botConfig>;
+
+// --- bot_stats --------------------------------------------------------------
+export const botStats = pgTable("bot_stats", {
+  id: uuid("id").primaryKey(),
+  messages_relayed: text("messages_relayed"), // keeping as text if you already used text
+  api_calls: text("api_calls"),
+  uptime: text("uptime"),
+  status: text("status"),
+  last_updated: timestamp("last_updated", { withTimezone: true }),
 });
 
-export const insertActivityLogSchema = createInsertSchema(activityLogs).omit({
-  id: true,
-  timestamp: true,
+export type BotStats = InferSelectModel<typeof botStats>;
+export type InsertBotStats = InferInsertModel<typeof botStats>;
+
+// --- relay_configs ----------------------------------------------------------
+export const relayConfigs = pgTable("relay_configs", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  source_channel_id: text("source_channel_id").notNull(),
+  target_channel_id: text("target_channel_id").notNull(),
+  bidirectional: boolean("bidirectional").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const insertBotStatsSchema = createInsertSchema(botStats).omit({
-  id: true,
-  lastUpdated: true,
+export type RelayConfig = InferSelectModel<typeof relayConfigs>;
+export type InsertRelayConfig = InferInsertModel<typeof relayConfigs>;
+
+// --- activity_logs ----------------------------------------------------------
+export const activityLogs = pgTable("activity_logs", {
+  id: uuid("id").primaryKey(),
+  timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
+  event: text("event").notNull(),
+  details: text("details"),
+  channel_id: text("channel_id"),
+  user_id: text("user_id"),
 });
 
-export const insertBotConfigSchema = createInsertSchema(botConfig).omit({
-  id: true,
-});
+export type ActivityLog = InferSelectModel<typeof activityLogs>;
+export type InsertActivityLog = InferInsertModel<typeof activityLogs>;
 
-// Type Inference
-export type InsertRelayConfig = z.infer<typeof insertRelayConfigSchema>;
-export type RelayConfig = typeof relayConfigs.$inferSelect;
-
-export type InsertActivityLog = z.infer<typeof insertActivityLogSchema>;
-export type ActivityLog = typeof activityLogs.$inferSelect;
-
-export type InsertBotStats = z.infer<typeof insertBotStatsSchema>;
-export type BotStats = typeof botStats.$inferSelect;
-
-export type InsertBotConfig = z.infer<typeof insertBotConfigSchema>;
-export type BotConfig = typeof botConfig.$inferSelect;
-
-const schema = {
+// Export schema bundle (optional convenience)
+export const schema = {
   botConfig,
   botStats,
   relayConfigs,
   activityLogs,
 };
-
-export { schema };
